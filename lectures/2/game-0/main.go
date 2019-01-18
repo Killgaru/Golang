@@ -6,7 +6,8 @@ import (
 )
 
 type Door struct {
-	fromTo []string
+	Name   string
+	fromTo []*Room
 	status bool
 }
 
@@ -15,7 +16,7 @@ type Room struct {
 	shortDescrip string
 	description  string
 	items        []Item
-	doors        []Door
+	doors        []*Door
 	neighbors    []string
 }
 
@@ -30,7 +31,23 @@ type Item struct {
 	description map[*string]string
 }
 
-func (r *Room) createRoom(Name, shortDes, des string, item []Item, d []Door, nei []string) {
+func (d *Door) chengeStatus() {
+	if d.status {
+		d.status = false
+	} else {
+		d.status = true
+	}
+	return
+}
+
+func (d *Door) checkStatus() string {
+	if d.status {
+		return "дверь закрыта"
+	}
+	return "дверь открыта"
+}
+
+func (r *Room) createRoom(Name, shortDes, des string, item []Item, d []*Door, nei []string) {
 	r.Name = Name
 	r.shortDescrip = shortDes
 	r.description = des
@@ -40,6 +57,21 @@ func (r *Room) createRoom(Name, shortDes, des string, item []Item, d []Door, nei
 	r.desWalk(nei)
 	RoomsInGame[Name] = r
 	return
+}
+
+func (r *Room) checkDoor(r2 *Room) bool {
+	if len(r.doors) == 0 || len(r2.doors) == 0 {
+		return false
+	}
+	for _, v1 := range r.doors {
+		for _, v2 := range v1.fromTo {
+			if v2.Name == r2.Name {
+				return v1.status
+			}
+		}
+
+	}
+	return true
 }
 
 func (r *Room) desWalk(nei []string) {
@@ -63,11 +95,12 @@ func (p *Players) lookAround(...string) string {
 
 func (p *Players) move(s ...string) string {
 	n := p.position.neighbors
-	//fmt.Println(n, s[0])
 	for _, v := range n {
-		//fmt.Println(n, v, s[0], s[0] == v)
 		if s[0] == v {
 			k := RoomsInGame[v]
+			if p.position.checkDoor(k) {
+				return "дверь закрыта"
+			}
 			p.position = k
 			return p.position.shortDescrip
 		}
@@ -135,7 +168,19 @@ func (p *Players) take(s ...string) string {
 	return "некуда класть"
 }
 
+func (p *Players) apply(s ...string) string {
+	if p.Checker(s[0]) {
+		if v, ok := keysAndDoors[s[0]]; ok && v.Name == s[1] {
+			v.chengeStatus()
+			return v.checkStatus()
+		}
+		return "не к чему применить"
+	}
+	return "нет предмета в инвентаре - " + s[0]
+}
+
 var (
+	keysAndDoors                                 = map[string]*Door{}
 	RoomsInGame                                  = map[string]*Room{}
 	kitchen, corridor, myRoom, myStreet, myHouse Room
 	Player                                       = Players{
@@ -162,10 +207,8 @@ var (
 		},
 	}
 	myDoor = Door{
-		fromTo: []string{
-			corridor.Name + "-" + myStreet.Name,
-			myStreet.Name + "-" + myHouse.Name,
-		},
+		Name:   "дверь",
+		fromTo: []*Room{&corridor, &myStreet, &myHouse},
 		status: true,
 	}
 	commands = map[string]func(*Players, ...string) string{
@@ -173,6 +216,7 @@ var (
 		"идти":        (*Players).move,
 		"одеть":       (*Players).robe,
 		"взять":       (*Players).take,
+		"применить":   (*Players).apply,
 	}
 )
 
@@ -186,6 +230,10 @@ func handleCommand(s []string) string {
 	case 2:
 		if v, ok := commands[s[0]]; ok {
 			return v(&Player, s[1])
+		}
+	case 3:
+		if v, ok := commands[s[0]]; ok {
+			return v(&Player, s[1], s[2])
 		}
 	}
 
@@ -210,26 +258,26 @@ func init() {
 		"кухня",
 		"кухня, ничего интересного.",
 		"ты находишься на кухне, на столе чай, надо собрать рюкзак и идти в универ.",
-		[]Item{}, []Door{}, []string{"коридор"},
+		[]Item{}, []*Door{}, []string{"коридор"},
 	)
 	corridor.createRoom(
 		"коридор",
 		"ничего интересного.",
 		"ничего интересного.",
-		[]Item{}, []Door{}, []string{"кухня", "комната", "улица"},
+		[]Item{}, []*Door{&myDoor}, []string{"кухня", "комната", "улица"},
 	)
 	myRoom.createRoom(
 		"комната",
 		"ты в своей комнате.",
 		"на столе: ключи, конспекты, на стуле - рюкзак.",
 		[]Item{myKeys, myNotes, myBackpack},
-		[]Door{}, []string{"коридор"},
+		[]*Door{}, []string{"коридор"},
 	)
 	myStreet.createRoom(
 		"улица",
 		"на улице весна.",
 		"на улице весна.",
-		[]Item{}, []Door{}, []string{"домой"},
+		[]Item{}, []*Door{&myDoor}, []string{"домой"},
 	)
 	myHouse.createRoom(
 		"домой",
@@ -239,6 +287,7 @@ func init() {
 		corridor.doors,
 		corridor.neighbors,
 	)
+	keysAndDoors[myKeys.Name] = &myDoor
 
 }
 
@@ -259,21 +308,25 @@ func main() {
 	fmt.Println()
 	fmt.Println(handleCommand([]string{"осмотреться"}))
 	fmt.Println(Player.position.Name)
-	fmt.Println(Player.position.items)
-	fmt.Println(Player.inventory)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"взять", "телефон"}))
-	fmt.Println(Player.position.Name)
 	fmt.Println()
 	fmt.Println(handleCommand([]string{"одеть", "рюкзак"}))
 	fmt.Println(Player.position.Name)
-	fmt.Println(Player.position.items)
-	fmt.Println(Player.inventory)
 	fmt.Println()
-	fmt.Println(handleCommand([]string{"взять", "телефон"}))
+	fmt.Println(handleCommand([]string{"взять", "ключи"}))
 	fmt.Println(Player.position.Name)
-	fmt.Println(Player.position.items)
-	fmt.Println(Player.inventory)
-	//fmt.Println(myBackpack.description[&myRoom.Name])
-
+	fmt.Println()
+	fmt.Println(handleCommand([]string{"взять", "конспекты"}))
+	fmt.Println(Player.position.Name)
+	fmt.Println()
+	fmt.Println(handleCommand([]string{"идти", "коридор"}))
+	fmt.Println(Player.position.Name)
+	fmt.Println()
+	fmt.Println(handleCommand([]string{"идти", "улица"}))
+	fmt.Println(Player.position.Name)
+	fmt.Println()
+	fmt.Println(handleCommand([]string{"применить", "ключи", "дверь"}))
+	fmt.Println(Player.position.Name)
+	fmt.Println()
+	fmt.Println(handleCommand([]string{"идти", "улица"}))
+	fmt.Println(Player.position.Name)
 }
