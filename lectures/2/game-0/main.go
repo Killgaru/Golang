@@ -3,7 +3,10 @@ package main
 
 import (
 	"fmt"
+	"strings"
 )
+
+type funcRoomDes func(*Room)
 
 type Door struct {
 	Name   string
@@ -15,9 +18,12 @@ type Room struct {
 	Name         string
 	shortDescrip string
 	description  string
+	defaultDes   string
 	items        []Item
 	doors        []*Door
 	neighbors    []string
+	WhoInMe      []string
+	funcsRoomDes []funcRoomDes
 }
 
 type Players struct {
@@ -47,15 +53,35 @@ func (d *Door) checkStatus() string {
 	return "дверь открыта"
 }
 
-func (r *Room) createRoom(Name, shortDes, des string, item []Item, d []*Door, nei []string) {
+func (r *Room) createRoom(Name, shortDes, des, defaultDes string, item []Item, d []*Door,
+	nei []string, WhoInMe []string, funcsRoomDes []funcRoomDes) {
 	r.Name = Name
 	r.shortDescrip = shortDes
 	r.description = des
+	r.defaultDes = defaultDes
 	r.items = item
 	r.neighbors = nei
 	r.doors = d
-	r.desWalk(nei)
+	r.WhoInMe = WhoInMe
+	r.funcsRoomDes = funcsRoomDes
+	r.desShortWalk()
+	r.refreshRoomDes()
 	RoomsInGame[Name] = r
+	return
+}
+
+func (p *Players) createPlayer(Name string, inventory []Item, position *Room) {
+	p.Name = Name
+	p.inventory = inventory
+	p.position = position
+	PlayersInGame[Name] = p
+	return
+}
+
+func (d *Door) createDoor(Name string, fromTo []*Room, status bool) {
+	d.Name = Name
+	d.fromTo = fromTo
+	d.status = status
 	return
 }
 
@@ -74,8 +100,14 @@ func (r *Room) checkDoor(r2 *Room) bool {
 	return true
 }
 
-func (r *Room) desWalk(nei []string) {
+func (r *Room) desClean() {
+	r.description = ""
+	return
+}
+
+func (r *Room) desWalk() {
 	var s string = " можно пройти - "
+	nei := r.neighbors
 	for i, v := range nei {
 		if i != len(nei)-1 {
 			s += fmt.Sprintf("%s, ", v)
@@ -85,11 +117,84 @@ func (r *Room) desWalk(nei []string) {
 
 	}
 	r.description += s
+	return
+}
+
+func (r *Room) desShortWalk() {
+	var s string = " можно пройти - "
+	nei := r.neighbors
+	for i, v := range nei {
+		if i != len(nei)-1 {
+			s += fmt.Sprintf("%s, ", v)
+		} else {
+			s += fmt.Sprintf("%s", v)
+		}
+
+	}
 	r.shortDescrip += s
 	return
 }
 
+func (r *Room) desFromItems() {
+	if len(r.items) != 0 {
+		var desItem, out string
+		m := make(map[string]string)
+		d := []string{}
+		for _, v := range r.items {
+			desItem = v.description[&r.Name]
+			if vm, ok := m[desItem]; ok {
+				vm += ", " + v.Name
+				m[desItem] = vm
+			} else {
+				m[desItem] = v.Name
+				d = append(d, desItem)
+			}
+		}
+		for i, v := range d {
+			out += v + m[v]
+			if i+1 == len(d) {
+				out += "."
+			} else {
+				out += ", "
+			}
+		}
+		r.description += out
+	} else {
+		r.description += "пустая комната."
+	}
+	return
+}
+
+func (r *Room) desFromInvPlayer() {
+	if r.Name == kitchen.Name {
+		for _, v := range r.WhoInMe {
+			if vm, ok := PlayersInGame[v]; ok {
+				if vm.Checker(myBackpack.Name) && vm.Checker(myKeys.Name) &&
+					vm.Checker(myNotes.Name) {
+					r.description += "надо идти в универ."
+				} else {
+					r.description += "надо собрать рюкзак и идти в универ."
+				}
+			}
+		}
+	}
+	return
+}
+
+func (r *Room) refreshRoomDes() {
+	for _, v := range r.funcsRoomDes {
+		v(r)
+	}
+	return
+}
+
+func (r *Room) setDefDesAsDes() {
+	r.description = r.defaultDes
+	return
+}
+
 func (p *Players) lookAround(...string) string {
+
 	return p.position.description
 }
 
@@ -101,11 +206,29 @@ func (p *Players) move(s ...string) string {
 			if p.position.checkDoor(k) {
 				return "дверь закрыта"
 			}
+			p.DelPlayerRoom()
 			p.position = k
+			p.AddPlayerRoom()
+			p.position.refreshRoomDes()
 			return p.position.shortDescrip
 		}
 	}
 	return "нет пути в " + s[0]
+}
+
+func (p *Players) AddPlayerRoom() {
+	p.position.WhoInMe = append(p.position.WhoInMe, p.Name)
+	return
+}
+
+func (p *Players) DelPlayerRoom() {
+	for i, v := range p.position.WhoInMe {
+		if v == p.Name {
+			p.position.WhoInMe = append(append(p.position.WhoInMe[:0],
+				p.position.WhoInMe[:i]...), p.position.WhoInMe[i+1:]...)
+		}
+	}
+	return
 }
 
 type Checker interface {
@@ -149,18 +272,17 @@ func (p *Players) robe(s ...string) string {
 	}
 	if p.position.Checker(s[0]) {
 		p.addItemFromRoom(s[0])
+		p.position.refreshRoomDes()
 		return "вы одели: " + s[0]
 	}
 	return "не могу одеть: " + s[0]
 }
 
 func (p *Players) take(s ...string) string {
-	if p.Checker(s[0]) {
-		return s[0] + " - уже взято"
-	}
 	if p.Checker(myBackpack.Name) {
 		if p.position.Checker(s[0]) {
 			p.addItemFromRoom(s[0])
+			p.position.refreshRoomDes()
 			return "предмет добавлен в инвентарь: " + s[0]
 		}
 		return "нет такого"
@@ -179,16 +301,18 @@ func (p *Players) apply(s ...string) string {
 	return "нет предмета в инвентаре - " + s[0]
 }
 
+func (p *Players) ExitGame(...string) string {
+	return "Exit"
+}
+
 var (
-	keysAndDoors                                 = map[string]*Door{}
-	RoomsInGame                                  = map[string]*Room{}
+	notInitiated                                 bool = true
+	keysAndDoors                                      = map[string]*Door{}
+	RoomsInGame                                       = map[string]*Room{}
+	PlayersInGame                                     = map[string]*Players{}
 	kitchen, corridor, myRoom, myStreet, myHouse Room
-	Player                                       = Players{
-		Name:      "Player1",
-		inventory: []Item{},
-		position:  &kitchen,
-	}
-	myBackpack = Item{
+	Player                                       Players
+	myBackpack                                   = Item{
 		Name: "рюкзак",
 		description: map[*string]string{
 			&myRoom.Name: "на стуле - ",
@@ -206,22 +330,21 @@ var (
 			&myRoom.Name: "на столе: ",
 		},
 	}
-	myDoor = Door{
-		Name:   "дверь",
-		fromTo: []*Room{&corridor, &myStreet, &myHouse},
-		status: true,
-	}
+	myDoor   Door
 	commands = map[string]func(*Players, ...string) string{
 		"осмотреться": (*Players).lookAround,
 		"идти":        (*Players).move,
 		"одеть":       (*Players).robe,
 		"взять":       (*Players).take,
 		"применить":   (*Players).apply,
+		"Exit":        (*Players).ExitGame,
 	}
 )
 
-func handleCommand(s []string) string {
+func handleCommand(s1 string) string {
 	//fmt.Println(len(s))
+	s := strings.Split(s1, " ")
+	//fmt.Printf("  HandleCommand:\n from Reader: %s\n converted: %v", s1, s)
 	switch len(s) {
 	case 1:
 		if v, ok := commands[s[0]]; ok {
@@ -236,97 +359,102 @@ func handleCommand(s []string) string {
 			return v(&Player, s[1], s[2])
 		}
 	}
-
 	return "неизвестная команда"
 }
 
-func Reader() (s []string) {
-	var i int
-	s = make([]string, 3)
+func Reader() (s1 string) {
+	// var i int
+	s := make([]string, 3)
 	fmt.Scanln(&s[0], &s[1], &s[2])
 	for _, v := range s {
 		if v != "" {
-			i++
+			// 		i++
+			if s1 == "" {
+				s1 += fmt.Sprint(v)
+			} else {
+				s1 += fmt.Sprint(" ", v)
+			}
+
 		}
 	}
-	s = s[:i]
+	//fmt.Println("  Reader: ", s)
+	// s = s[:i]
 	return
 }
 
-func init() {
+func initGame() {
+	Player.createPlayer("Player1", []Item{}, &kitchen)
 	kitchen.createRoom(
 		"кухня",
 		"кухня, ничего интересного.",
 		"ты находишься на кухне, на столе чай, надо собрать рюкзак и идти в универ.",
-		[]Item{}, []*Door{}, []string{"коридор"},
+		"ты находишься на кухне, на столе чай, ",
+		[]Item{}, []*Door{},
+		[]string{"коридор"}, []string{Player.Name},
+		[]funcRoomDes{(*Room).desClean, (*Room).setDefDesAsDes,
+			(*Room).desFromInvPlayer, (*Room).desWalk},
 	)
 	corridor.createRoom(
 		"коридор",
 		"ничего интересного.",
 		"ничего интересного.",
-		[]Item{}, []*Door{&myDoor}, []string{"кухня", "комната", "улица"},
+		"ничего интересного.",
+		[]Item{}, []*Door{&myDoor},
+		[]string{"кухня", "комната", "улица"}, []string{},
+		[]funcRoomDes{(*Room).desClean, (*Room).setDefDesAsDes, (*Room).desWalk},
 	)
 	myRoom.createRoom(
 		"комната",
 		"ты в своей комнате.",
+		"",
 		"на столе: ключи, конспекты, на стуле - рюкзак.",
-		[]Item{myKeys, myNotes, myBackpack},
-		[]*Door{}, []string{"коридор"},
+		[]Item{myKeys, myNotes, myBackpack}, []*Door{},
+		[]string{"коридор"}, []string{},
+		[]funcRoomDes{(*Room).desClean, (*Room).desFromItems, (*Room).desWalk},
 	)
 	myStreet.createRoom(
 		"улица",
 		"на улице весна.",
 		"на улице весна.",
-		[]Item{}, []*Door{&myDoor}, []string{"домой"},
+		"на улице весна.",
+		[]Item{}, []*Door{&myDoor},
+		[]string{"домой"}, []string{},
+		[]funcRoomDes{(*Room).desClean, (*Room).setDefDesAsDes, (*Room).desWalk},
 	)
 	myHouse.createRoom(
 		"домой",
 		corridor.shortDescrip,
 		corridor.description,
+		corridor.defaultDes,
 		corridor.items,
 		corridor.doors,
 		corridor.neighbors,
+		corridor.WhoInMe,
+		corridor.funcsRoomDes,
 	)
+	myDoor.createDoor("дверь", []*Room{&corridor, &myStreet, &myHouse}, true)
 	keysAndDoors[myKeys.Name] = &myDoor
 
 }
 
+func Game0() {
+	if notInitiated {
+		initGame()
+		notInitiated = false
+		fmt.Println("Welcome in Game0")
+	}
+	out := handleCommand(Reader())
+	if out != "Exit" {
+		fmt.Println(out)
+		Game0()
+	}
+	return
+}
+
 func main() {
-	fmt.Println("Hello World!")
-	// fmt.Println(kitchen.neighbors)
-	// fmt.Println(corridor.neighbors)
-	// fmt.Println(myRoom.neighbors)
-	// fmt.Println(RoomsInGame)
-	fmt.Println(handleCommand([]string{"осмотреться"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"идти", "коридор"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"идти", "комната"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"осмотреться"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"одеть", "рюкзак"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"взять", "ключи"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"взять", "конспекты"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"идти", "коридор"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"идти", "улица"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"применить", "ключи", "дверь"}))
-	fmt.Println(Player.position.Name)
-	fmt.Println()
-	fmt.Println(handleCommand([]string{"идти", "улица"}))
-	fmt.Println(Player.position.Name)
+	// initGame()
+	// fmt.Println(PlayersInGame)
+	// fmt.Println(kitchen.description)
+	// fmt.Println(corridor.description)
+	Game0()
 }
