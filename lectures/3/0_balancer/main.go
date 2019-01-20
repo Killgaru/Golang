@@ -2,13 +2,14 @@
 package main
 
 import (
-	"fmt"
-	//"sync"
-	"time"
+	//"fmt"
+	"sync"
+	//"time"
 )
 
 type RoundRobinBalancer struct {
 	servers []int
+	mx      sync.Mutex
 }
 
 func (r *RoundRobinBalancer) Init(in int) {
@@ -20,51 +21,43 @@ func (r *RoundRobinBalancer) GiveStat() []int {
 	return r.servers
 }
 
-func (r *RoundRobinBalancer) GiveNode() int {
-	//var wg sync.WaitGroup
-	//wg.Add(1)
+func (r *RoundRobinBalancer) GiveNode() (out int) {
+	r.mx.Lock()
+	// var wg sync.WaitGroup
 	c := make(chan int)
+	// wg.Add(1)
 	go r.scanServers(c)
-	//wg.Wait()
-	time.Sleep(10 * time.Millisecond)
-	return <-c
+	out = <-c
+	// wg.Wait()
+	//time.Sleep(time.Millisecond)
+	r.mx.Unlock()
+	return
 }
 
 func (r *RoundRobinBalancer) scanServers(c chan int) {
+	// fmt.Println("*****")
+	end := len(r.servers) - 1
 	for i, v := range r.servers {
-		if i+1 == len(r.servers) {
-			if v != r.servers[0] {
-				r.servers[i]++
-				//wg.Done()
-				c <- i + 1
-				return
-			}
-			r.servers[0]++
-			//wg.Done()
-			c <- i + 1
-			return
-		}
-		if v == r.servers[i+1] {
+		if (i == 0) && (v == r.servers[end]) {
 			r.servers[i]++
-			//wg.Done()
-			c <- i + 1
-			return
+			c <- i
+			break
 		}
-
+		if i == end {
+			r.servers[end]++
+			c <- i
+			break
+		}
+		if i != 0 && v < r.servers[i-1] && v <= r.servers[i+1] {
+			r.servers[i]++
+			c <- i
+			break
+		}
 	}
-	c <- 0
-	//wg.Done()
+	// wg.Done()
 	return
 }
 
 func main() {
-	fmt.Println("Hello World!")
-	balancer := new(RoundRobinBalancer)
-	balancer.Init(3)
-	fmt.Println(balancer.GiveStat())
-	n := balancer.GiveNode()
-	fmt.Println(n, balancer.GiveStat())
-	n = balancer.GiveNode()
-	fmt.Println(n, balancer.GiveStat())
 
 }
