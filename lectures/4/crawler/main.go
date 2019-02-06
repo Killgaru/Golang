@@ -67,7 +67,7 @@ func (h html) HtmlBaseHref() (out string, err error) {
 }
 
 func (h html) HtmlA() (out []string) {
-	out = betweenTextAllCut(string(h), "<a", "></a>", 0, 0)
+	out = betweenTextAllCut(string(h), "<a", "</a>", 0, 0)
 	return
 }
 
@@ -144,9 +144,10 @@ func intoCrawl(host string, inout *[]string, c chan string) {
 			}
 		}
 	}
-	for _, v := range tagA {
+	for i, v := range tagA {
 		if v[:1] == "/" {
 			intoCrawl(newHost+v, inout, c)
+			fmt.Printf("%v из %v\n", i+1, len(tagA))
 		}
 	}
 	resp.Body.Close()
@@ -154,5 +155,8 @@ func intoCrawl(host string, inout *[]string, c chan string) {
 }
 
 func main() {
-	fmt.Println("Hi!")
+	var a string
+	fmt.Println("Введите URL")
+	fmt.Scanln(&a)
+	fmt.Println(Crawl(a))
 }
